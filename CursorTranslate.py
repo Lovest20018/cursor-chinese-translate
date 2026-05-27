@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-Cursor 汉化 + 用量监控工具
+Cursor 汉化工具
 功能：
-  1. 将翻译脚本注入 Cursor 的 workbench.html，实现设置页面中文化
-  2. 自动从本地数据库读取认证令牌，调用 API 获取用量数据
-  3. 在 Cursor 设置页面用户信息区域下方显示实时用量情况
+  1. 将翻译脚本注入 Cursor 的 workbench.html，实现界面中文化
+  2. 从 cursor_translate_dic.txt 读取翻译词典并生成前端翻译脚本
 
 用法：
-  python CursorTranslate.py --apply     汉化 + 用量显示
+  python CursorTranslate.py --apply     应用汉化
   python CursorTranslate.py --restore   恢复原始文件
+  python CursorTranslate.py --extract-source-strings  从 Cursor 源码提取候选翻译词条
 """
 
 import argparse
@@ -20,9 +20,7 @@ import os
 import platform
 import re
 import shutil
-import sqlite3
 import sys
-import urllib.request
 
 CURRENT_PLATFORM = platform.system().lower()
 
@@ -53,173 +51,73 @@ else:
     CURSOR_USER_DATA_PATH = os.path.expanduser("~/.cursor")
 
 WORKBENCH_RELATIVE_DIR = os.path.join("resources", "app", "out", "vs", "code", "electron-sandbox", "workbench")
+WORKBENCH_SOURCE_RELATIVE_PATH = os.path.join("resources", "app", "out", "vs", "workbench", "workbench.desktop.main.js")
 WORKBENCH_HTML_NAME = "workbench.html"
 TRANSLATION_JS_NAME = "cursor_hanhua.js"
 TRANSLATION_DICTIONARY_NAME = "cursor_translate_dic.txt"
 INJECTION_MARKER = "<!-- CURSOR_HANHUA_INJECTION -->"
 BACKUP_SUFFIX = ".bak"
 
-API_USAGE = "https://api2.cursor.sh/auth/usage"
-API_USAGE_SUMMARY = "https://www.cursor.com/api/usage-summary"
-
-STATE_DB_RELATIVE_PATH = os.path.join("User", "globalStorage", "state.vscdb")
-ACCESS_TOKEN_KEY = "cursorAuth/accessToken"
-EMAIL_KEY = "cursorAuth/cachedEmail"
 CHECKSUM_KEY = "vs/code/electron-sandbox/workbench/workbench.html"
-USAGE_CARD_ID = "cursor-usage-card"
 
+SOURCE_EXTRACTION_CONTEXT_KEYWORDS = (
+    "composer",
+    "agent",
+    "glass",
+    "automation",
+    "automations",
+    "mcp",
+    "skill",
+    "skills",
+    "subagent",
+    "cursor",
+    "plugin",
+    "plugins",
+)
 
-def create_empty_usage_data():
-    return {
-        "total_used": 0,
-        "total_limit": 2000,
-        "remaining": 2000,
-        "premium_used": 0,
-        "premium_limit": 500,
-        "total_percent_used": 0,
-        "api_percent_used": 0,
-        "billing_cycle_start": "",
-        "billing_cycle_end": "",
-        "updated_at": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        "plan_type": "pro",
-        "is_valid": False,
-        "model_details": {}
-    }
+SOURCE_EXTRACTION_PROTECTED_TEXTS = {
+    "High",
+    "Medium",
+    "Low",
+    "Extra High",
+    "Max",
+    "Canvas",
+    "Memories",
+    "GitHub",
+    "Microsoft Teams",
+    "Sentry",
+    "Pager Duty",
+    "Enter",
+    "Escape",
+    "Backspace",
+    "ArrowUp",
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "Tab",
+    "HEAD",
+    "UNSPECIFIED",
+    "TIMEOUT",
+    "ERROR",
+    "AGENT",
+    "PLAN",
+}
 
-
-def read_access_token():
-    """从 Cursor 本地 state.vscdb 数据库读取访问令牌和用户邮箱"""
-    database_path = os.path.join(CURSOR_USER_DATA_PATH, STATE_DB_RELATIVE_PATH)
-    if not os.path.exists(database_path):
-        print(f"[警告] 未找到 Cursor 数据库: {database_path}")
-        return None, None
-
-    try:
-        connection = sqlite3.connect(database_path)
-        cursor = connection.cursor()
-
-        cursor.execute("SELECT value FROM ItemTable WHERE key=?", (ACCESS_TOKEN_KEY,))
-        result = cursor.fetchone()
-        access_token = result[0] if result else None
-
-        cursor.execute("SELECT value FROM ItemTable WHERE key=?", (EMAIL_KEY,))
-        result = cursor.fetchone()
-        email = result[0] if result else None
-
-        connection.close()
-        return access_token, email
-    except Exception as error:
-        print(f"[警告] 读取数据库失败: {error}")
-        return None, None
-
-
-def build_session_cookie(access_token):
-    """从访问令牌构造 WorkosCursorSessionToken Cookie"""
-    try:
-        token_parts = access_token.split('.')
-        if len(token_parts) < 2:
-            return None
-
-        payload_segment = token_parts[1]
-        payload_segment += '=' * (-len(payload_segment) % 4)
-        payload = json.loads(base64.b64decode(payload_segment).decode('utf-8'))
-        user_id = payload.get('sub', '').replace('auth0|', '')
-        return f"{user_id}::{access_token}"
-    except Exception:
-        return None
-
-
-def fetch_json(url, headers):
-    try:
-        request = urllib.request.Request(url)
-        for header_name, header_value in headers.items():
-            request.add_header(header_name, header_value)
-        response = urllib.request.urlopen(request, timeout=10)
-        return json.loads(response.read().decode('utf-8'))
-    except Exception as error:
-        print(f"[警告] 请求失败 {url}: {error}")
-        return None
-
-
-def fetch_usage_summary(access_token):
-    """调用 cursor.com/api/usage-summary 获取总用量摘要"""
-    cookie_value = build_session_cookie(access_token)
-    if not cookie_value:
-        return None
-
-    return fetch_json(
-        API_USAGE_SUMMARY,
-        {
-            'Cookie': f'WorkosCursorSessionToken={cookie_value}',
-            'Accept': 'application/json',
-        },
-    )
-
-
-def fetch_premium_usage(access_token):
-    """调用 api2.cursor.sh/auth/usage 获取高级请求用量"""
-    return fetch_json(
-        API_USAGE,
-        {
-            'Authorization': f'Bearer {access_token}',
-            'Accept': 'application/json',
-        },
-    )
-
-
-def merge_usage_data(access_token):
-    """整合所有用量数据为统一格式"""
-    usage_data = create_empty_usage_data()
-
-    summary = fetch_usage_summary(access_token)
-    if summary and 'individualUsage' in summary:
-        plan_usage = summary['individualUsage'].get('plan', {})
-        usage_data["total_used"] = plan_usage.get('used', 0)
-        usage_data["total_limit"] = plan_usage.get('limit', 2000)
-        usage_data["remaining"] = plan_usage.get('remaining', 0)
-        usage_data["total_percent_used"] = round(plan_usage.get('totalPercentUsed', 0), 1)
-        usage_data["api_percent_used"] = round(plan_usage.get('apiPercentUsed', 0), 1)
-        usage_data["plan_type"] = summary.get('membershipType', 'pro')
-        usage_data["is_valid"] = True
-
-        billing_cycle_start = summary.get('billingCycleStart', '')
-        billing_cycle_end = summary.get('billingCycleEnd', '')
-        if billing_cycle_start:
-            usage_data["billing_cycle_start"] = billing_cycle_start[:10]
-        if billing_cycle_end:
-            usage_data["billing_cycle_end"] = billing_cycle_end[:10]
-
-    premium_usage = fetch_premium_usage(access_token)
-    if premium_usage:
-        model_details = {}
-        for model_name, model_info in premium_usage.items():
-            if model_name == 'startOfMonth':
-                continue
-            model_details[model_name] = {
-                "requests": model_info.get('numRequests', 0),
-                "max_requests": model_info.get('maxRequestUsage', 0),
-                "tokens": model_info.get('numTokens', 0),
-            }
-        usage_data["model_details"] = model_details
-
-        if 'gpt-4' in premium_usage:
-            usage_data["premium_used"] = premium_usage['gpt-4'].get('numRequests', 0)
-            usage_data["premium_limit"] = premium_usage['gpt-4'].get('maxRequestUsage', 500)
-
-        if not usage_data["billing_cycle_end"] and 'startOfMonth' in premium_usage:
-            try:
-                billing_start_date = datetime.datetime.fromisoformat(premium_usage['startOfMonth'].replace('Z', '+00:00'))
-                usage_data["billing_cycle_start"] = billing_start_date.strftime('%Y-%m-%d')
-                next_month = billing_start_date.month % 12 + 1
-                next_year = billing_start_date.year + (billing_start_date.month // 12)
-                billing_end_date = billing_start_date.replace(year=next_year, month=next_month)
-                usage_data["billing_cycle_end"] = billing_end_date.strftime('%Y-%m-%d')
-            except Exception:
-                pass
-
-        usage_data["is_valid"] = True
-
-    return usage_data
+SOURCE_EXTRACTION_FIELD_PATTERN = re.compile(
+    r'(?:(?:label|title|tooltip|children|description|placeholder|aria-label|original)\s*:\s*|'
+    r'"(?:aria-label|data-tooltip|title|placeholder)"\s*:\s*)'
+    r'"((?:\\.|[^"\\])*)"',
+)
+SOURCE_EXTRACTION_QUOTED_STRING_PATTERN = re.compile(r'"((?:\\.|[^"\\])*)"')
+SOURCE_EXTRACTION_CONTEXTUAL_QUOTED_FIELDS = (
+    "children",
+    "title",
+    "label",
+    "tooltip",
+    "description",
+    "placeholder",
+    "aria-label",
+)
 
 
 def get_translation_dictionary_path():
@@ -276,14 +174,13 @@ def read_translation_dictionary():
     return dictionary_data
 
 
-def generate_js_code(usage_data, translation_dictionary_data):
-    """生成包含翻译、用量显示和实时刷新的完整 JavaScript 代码"""
-    usage_json = json.dumps(usage_data, ensure_ascii=False)
+def generate_js_code(translation_dictionary_data):
+    """生成包含翻译和实时刷新的 JavaScript 代码"""
     translation_dictionary_json = json.dumps(translation_dictionary_data, ensure_ascii=False)
 
     return '''\
 /*
- * Cursor 汉化 + 用量监控脚本
+ * Cursor 汉化脚本
  * Auto-generated by CursorTranslate.py
  * Generated: ''' + datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S') + '''
  */
@@ -291,6 +188,13 @@ def generate_js_code(usage_data, translation_dictionary_data):
     'use strict';
 
     const translationDictionary = new Map(Object.entries(''' + translation_dictionary_json + '''));
+    const normalizedTranslationDictionary = new Map();
+    for (const [sourceText, translatedText] of translationDictionary.entries()) {
+        const normalizedSourceText = normalizeTranslationWhitespace(sourceText);
+        if (normalizedSourceText && !normalizedTranslationDictionary.has(normalizedSourceText)) {
+            normalizedTranslationDictionary.set(normalizedSourceText, translatedText);
+        }
+    }
     const translationPatterns = [
         [/^(\\d+) requests? remaining$/i, "$1 次请求剩余"],
         [/^(\\d+) of (\\d+) requests?$/i, "$1 / $2 次请求"],
@@ -312,34 +216,124 @@ def generate_js_code(usage_data, translation_dictionary_data):
         [/^Auto-Run Mode Controlled by Team Admin$/i, "自动运行模式由团队管理员控制"],
         [/^Auto-Run Mode Controlled by Team Admin \\(Sandbox Enabled\\)$/i, "自动运行模式由团队管理员控制（沙盒已启用）"],
         [/^Custom cron: (.+)$/i, "自定义 Cron：$1"],
-        [/^Automatically index any new folders with fewer than (\\d+) files$/i, "自动索引文件数少于 $1 的新文件夹"],
+        [/^Automatically index any new folders with fewer than ([\\d,]+) files\\.?$/i, "自动索引文件数少于 $1 的新文件夹。"],
+        [/^MCP tools that can run automatically\\. Format: ['"]server:tool['"], ['"]server:\\*['"] for all tools from a server, ['"]\\*:tool['"] for a tool from any server, or ['"]\\*:\\*['"] for all tools from all servers\\.?$/i, "可自动运行的 MCP 工具。格式：'server:tool'；'server:*' 表示某个服务器的所有工具；'*:tool' 表示任意服务器中的某个工具；'*:*' 表示所有服务器的所有工具。"],
         [/^(\\d+) hooks?$/i, "$1 个钩子"],
         [/^(\\d+) automations?$/i, "$1 个自动化"],
         [/^(\\d+) rules?$/i, "$1 条规则"],
         [/^(\\d+) skills?$/i, "$1 个技能"],
         [/^(\\d+) commands?$/i, "$1 个命令"],
-        [/^(\\d+) subagents?$/i, "$1 个子智能体"]
+        [/^(\\d+) subagents?$/i, "$1 个子智能体"],
+        [/^(\\d+) Queued$/i, "$1 条已排队"],
+        [/^(.*?\\S)\\s+to Send$/i, "$1 发送"],
+        [/^Thought briefly$/i, "短暂思考"],
+        [/^Thought for ([\\d.]+)s$/i, "思考耗时 $1 秒"],
+        [/^for ([\\d.]+)s$/i, "耗时 $1 秒"],
+        [/^([\\d.]+)s$/i, "$1 秒"],
+        [/^Completed (\\d+) of (\\d+)$/i, "已完成 $1 / $2"],
+        [/^Completed (\\d+) of (\\d+) to-dos$/i, "已完成 $1 / $2 个待办"],
+        [/^Started (\\d+) to-dos$/i, "已开始 $1 个待办"],
+        [/^Added (\\d+) to-dos$/i, "已添加 $1 个待办"],
+        [/^Cancelled (\\d+) to-dos$/i, "已取消 $1 个待办"],
+        [/^Monitoring background (task|tasks)$/i, "正在监控后台任务"],
+        [/^Monitored background (task|tasks)$/i, "已监控后台任务"]
     ];
 
     const editorAreaSelector = '.monaco-editor, .overflow-guard, .view-lines, .editor-scrollable, .inputarea, .rename-input';
     const skippedTags = new Set(['TEXTAREA', 'INPUT', 'SCRIPT', 'STYLE', 'CODE', 'PRE', 'NOSCRIPT']);
-    const usageData = ''' + usage_json + ''';
     const pendingNodes = [];
     let rescanCount = 0;
-    const usageContainerSelectors = [
-        '[class*="account"]',
-        '[class*="profile"]',
-        '[class*="user"]',
-        '.settings-editor',
-        '.pane-body'
-    ];
     let isTranslationScheduled = false;
 
-    function formatCompactNumber(value) {
-        if (value >= 1e9) return (value / 1e9).toFixed(1) + 'B';
-        if (value >= 1e6) return (value / 1e6).toFixed(1) + 'M';
-        if (value >= 1e3) return (value / 1e3).toFixed(1) + 'K';
-        return String(value);
+    function normalizeTranslationWhitespace(text) {
+        return text.replace(/\\s+/g, ' ').trim();
+    }
+
+    function lookupTranslation(text) {
+        if (translationDictionary.has(text)) {
+            return translationDictionary.get(text);
+        }
+
+        const normalizedText = normalizeTranslationWhitespace(text);
+        if (normalizedText !== text && normalizedTranslationDictionary.has(normalizedText)) {
+            return normalizedTranslationDictionary.get(normalizedText);
+        }
+
+        return null;
+    }
+
+    function translateAgentSummaryPart(part) {
+        const trimmedPart = part.trim();
+        const unitMatch = trimmedPart.match(/^(?:(explored|ran)\\s+)?(\\d+)\\s+(directory|directories|file|files|search|searches|fetch|fetches|command|commands|edit|edits|delete|deletes|agent|agents|browser action|browser actions)$/i);
+        if (unitMatch) {
+            const verb = (unitMatch[1] || '').toLowerCase();
+            const count = unitMatch[2];
+            const unit = unitMatch[3].toLowerCase();
+            const unitTranslations = {
+                directory: '个目录',
+                directories: '个目录',
+                file: '个文件',
+                files: '个文件',
+                search: '次搜索',
+                searches: '次搜索',
+                fetch: '次抓取',
+                fetches: '次抓取',
+                command: '条命令',
+                commands: '条命令',
+                edit: '处编辑',
+                edits: '处编辑',
+                delete: '处删除',
+                deletes: '处删除',
+                agent: '个 Agent',
+                agents: '个 Agent',
+                'browser action': '个浏览器操作',
+                'browser actions': '个浏览器操作'
+            };
+            const translatedUnit = unitTranslations[unit];
+            if (translatedUnit) {
+                const translated = count + ' ' + translatedUnit;
+                if (verb === 'explored') return '探索了 ' + translated;
+                if (verb === 'ran') return '运行了 ' + translated;
+                return translated;
+            }
+        }
+
+        const statusMatch = trimmedPart.match(/^(\\d+)\\s+(complete|active)$/i);
+        if (statusMatch) {
+            return statusMatch[1] + (statusMatch[2].toLowerCase() === 'complete' ? ' 个已完成' : ' 个活动中');
+        }
+
+        if (/^lints$/i.test(trimmedPart)) return 'Lint 检查';
+        return null;
+    }
+
+    function translateAgentSummaryDetails(text) {
+        if (!text || /[\\u4e00-\\u9fff]/.test(text)) return null;
+        const parts = text.split(/,\\s*/);
+        if (parts.length === 0 || parts.length > 8) return null;
+
+        const translatedParts = [];
+        for (const part of parts) {
+            const translatedPart = translateAgentSummaryPart(part);
+            if (translatedPart === null) return null;
+            translatedParts.push(translatedPart);
+        }
+
+        return translatedParts.join('、');
+    }
+
+    function translateSplitSettingDescription(element) {
+        if (!element || !element.textContent || element.closest(editorAreaSelector)) return false;
+        if (element.childNodes.length === 0 || element.childNodes.length > 12) return false;
+
+        const normalizedText = normalizeTranslationWhitespace(element.textContent);
+        const indexingMatch = normalizedText.match(/^Automatically index any new folders with fewer than ([\\d,]+) files\\.?$/i);
+        if (indexingMatch) {
+            element.textContent = '自动索引文件数少于 ' + indexingMatch[1] + ' 的新文件夹。';
+            return true;
+        }
+
+        return false;
     }
 
     function translateTextNode(node) {
@@ -347,16 +341,28 @@ def generate_js_code(usage_data, translation_dictionary_data):
         if (!text) return;
 
         const trimmedText = text.trim();
-        if (!trimmedText || trimmedText.length > 500) return;
+        if (!trimmedText || trimmedText.length > 2500) return;
         if (/^[\\d\\s.,;:!?@#$%^&*()\\-+=<>\\/\\\\|~`'"[\\]{}]+$/.test(trimmedText)) return;
-        if (/[\\u4e00-\\u9fff]/.test(trimmedText) && (trimmedText.match(/[\\u4e00-\\u9fff]/g) || []).length > trimmedText.length * 0.3) return;
 
-        if (translationDictionary.has(trimmedText)) {
+        const translatedText = lookupTranslation(trimmedText);
+        if (translatedText !== null) {
             const prefix = text.substring(0, text.indexOf(trimmedText));
             const suffix = text.substring(text.indexOf(trimmedText) + trimmedText.length);
-            node.textContent = prefix + translationDictionary.get(trimmedText) + suffix;
+            node.textContent = prefix + translatedText + suffix;
             return;
         }
+
+        const translatedAgentSummary = translateAgentSummaryDetails(trimmedText);
+        if (translatedAgentSummary !== null) {
+            const prefix = text.substring(0, text.indexOf(trimmedText));
+            const suffix = text.substring(text.indexOf(trimmedText) + trimmedText.length);
+            node.textContent = prefix + translatedAgentSummary + suffix;
+            return;
+        }
+
+        if (trimmedText.length > 500) return;
+
+        if (/[\\u4e00-\\u9fff]/.test(trimmedText) && (trimmedText.match(/[\\u4e00-\\u9fff]/g) || []).length > trimmedText.length * 0.3) return;
 
         for (const [pattern, replacement] of translationPatterns) {
             if (pattern.test(trimmedText)) {
@@ -364,6 +370,7 @@ def generate_js_code(usage_data, translation_dictionary_data):
                 return;
             }
         }
+
     }
 
     function translateAttributes(element) {
@@ -372,8 +379,9 @@ def generate_js_code(usage_data, translation_dictionary_data):
             if (!attributeValue) continue;
 
             const trimmedValue = attributeValue.trim();
-            if (translationDictionary.has(trimmedValue)) {
-                element.setAttribute(attributeName, translationDictionary.get(trimmedValue));
+            const translatedValue = lookupTranslation(trimmedValue);
+            if (translatedValue !== null) {
+                element.setAttribute(attributeName, translatedValue);
             }
         }
     }
@@ -391,16 +399,16 @@ def generate_js_code(usage_data, translation_dictionary_data):
     function translateElementOwnText(element) {
         if (!element || !element.childNodes || element.childNodes.length === 0) return;
         if (element.closest(editorAreaSelector)) return;
-        if (element.id === 'cursor-usage-card') return;
 
         const ownText = getElementOwnText(element);
         const trimmedText = ownText.trim();
         if (!trimmedText || trimmedText.length > 120) return;
-        if (!translationDictionary.has(trimmedText)) return;
+        const translatedText = lookupTranslation(trimmedText);
+        if (translatedText === null) return;
 
         for (const childNode of element.childNodes) {
             if (childNode.nodeType === Node.TEXT_NODE && childNode.textContent.includes(trimmedText)) {
-                childNode.textContent = childNode.textContent.replace(trimmedText, translationDictionary.get(trimmedText));
+                childNode.textContent = childNode.textContent.replace(trimmedText, translatedText);
                 return;
             }
         }
@@ -427,8 +435,8 @@ def generate_js_code(usage_data, translation_dictionary_data):
                 }
                 if (node.classList && (node.classList.contains('monaco-editor') || node.classList.contains('overflow-guard') || node.classList.contains('view-lines') || node.classList.contains('editor-scrollable'))) continue;
                 if (node.getAttribute('contenteditable') === 'true') continue;
-                if (node.id === 'cursor-usage-card') continue;
 
+                if (translateSplitSettingDescription(node)) continue;
                 translateAttributes(node);
                 translateElementOwnText(node);
                 for (let index = node.childNodes.length - 1; index >= 0; index -= 1) {
@@ -456,15 +464,11 @@ def generate_js_code(usage_data, translation_dictionary_data):
                 translateTree(node);
             } catch (error) {}
         }
-        try {
-            renderUsageCard();
-        } catch (error) {}
     }
 
     function rescanDocument() {
         try {
             translateTree(document.body);
-            renderUsageCard();
         } catch (error) {}
     }
 
@@ -483,73 +487,6 @@ def generate_js_code(usage_data, translation_dictionary_data):
         }, 2500);
     }
 
-    function buildModelDetailsHtml() {
-        if (!usageData.model_details) return '';
-
-        let html = '';
-        for (const [modelName, detail] of Object.entries(usageData.model_details)) {
-            html += '<div style="margin-top:4px;opacity:.85">' +
-                modelName + '：' + detail.requests + ' / ' + detail.max_requests +
-                '，Token ' + formatCompactNumber(detail.tokens || 0) +
-                '</div>';
-        }
-        return html;
-    }
-
-    function buildUsageCardHtml() {
-        return '' +
-            '<div style="font-weight:600;margin-bottom:8px">用量监控</div>' +
-            '<div>总用量：' + (usageData.total_used || 0) + ' / ' + (usageData.total_limit || 0) + '</div>' +
-            '<div>高级请求：' + (usageData.premium_used || 0) + ' / ' + (usageData.premium_limit || 0) + '</div>' +
-            '<div>剩余次数：' + (usageData.remaining || 0) + '</div>' +
-            '<div>总使用率：' + (usageData.total_percent_used || 0) + '%</div>' +
-            '<div>API 使用率：' + (usageData.api_percent_used || 0) + '%</div>' +
-            '<div>计费周期：' + (usageData.billing_cycle_start || '-') + ' 至 ' + (usageData.billing_cycle_end || '-') + '</div>' +
-            '<div>计划类型：' + (usageData.plan_type || '-') + '</div>' +
-            '<div>更新时间：' + (usageData.updated_at || '-') + '</div>' +
-            buildModelDetailsHtml();
-    }
-
-    function createUsageCardElement() {
-        const card = document.createElement('div');
-        card.id = 'cursor-usage-card';
-        card.style.cssText = [
-            'margin-top:12px',
-            'padding:12px',
-            'border:1px solid var(--vscode-widget-border)',
-            'border-radius:8px',
-            'background:var(--vscode-editorWidget-background)',
-            'color:var(--vscode-foreground)',
-            'font-size:12px',
-            'line-height:1.6'
-        ].join(';');
-        card.innerHTML = buildUsageCardHtml();
-        return card;
-    }
-
-    function findUsageContainer() {
-        for (const selector of usageContainerSelectors) {
-            const container = document.querySelector(selector);
-            if (container) {
-                return container;
-            }
-        }
-        return null;
-    }
-
-    function renderUsageCard() {
-        const existingCard = document.getElementById('cursor-usage-card');
-        if (existingCard && existingCard.parentElement) {
-            existingCard.replaceWith(createUsageCardElement());
-            return;
-        }
-
-        const container = findUsageContainer();
-        if (!container) return;
-
-        container.appendChild(createUsageCardElement());
-    }
-
     function handleMutations(mutations) {
         for (const mutation of mutations) {
             if (mutation.type === 'childList') {
@@ -565,7 +502,6 @@ def generate_js_code(usage_data, translation_dictionary_data):
     }
 
     translateTree(document.body);
-    renderUsageCard();
     scheduleStartupRescans();
 
     const observer = new MutationObserver(handleMutations);
@@ -586,6 +522,25 @@ def get_workbench_dir():
 def get_workbench_html_path():
     """获取 workbench.html 完整路径"""
     return os.path.join(get_workbench_dir(), WORKBENCH_HTML_NAME)
+
+
+def get_workbench_source_path():
+    """获取 Cursor 打包后的 workbench 主源码路径"""
+    return os.path.join(CURSOR_INSTALL_PATH, WORKBENCH_SOURCE_RELATIVE_PATH)
+
+
+def get_cursor_skills_dirs():
+    """获取可能存在的 Cursor 内置技能目录路径"""
+    candidate_dirs = [
+        os.path.join(CURSOR_USER_DATA_PATH, "skills-cursor"),
+        os.path.join(os.path.expanduser("~"), ".cursor", "skills-cursor"),
+    ]
+    unique_dirs = []
+    for candidate_dir in candidate_dirs:
+        normalized_dir = os.path.abspath(os.path.expanduser(candidate_dir))
+        if normalized_dir not in unique_dirs:
+            unique_dirs.append(normalized_dir)
+    return unique_dirs
 
 
 def get_translation_js_path():
@@ -617,18 +572,22 @@ def get_default_install_path_hint():
 def print_help():
     print("[用法] python CursorTranslate.py --apply [--cursorDir=\"路径\"]")
     print("[用法] python CursorTranslate.py --restore [--cursorDir=\"路径\"]")
+    print("[用法] python CursorTranslate.py --extract-source-strings [--cursorDir=\"路径\"] [--limit=200]")
     print("[用法] python CursorTranslate.py --help")
     print(f"[默认] 当前平台默认安装目录: {get_default_install_path_hint()}")
     print("[说明] 不带任何参数时仅显示帮助信息，不执行任何操作")
     print("[说明] 如 Cursor 不在默认位置，可通过 --cursorDir 指定安装目录")
+    print("[说明] --extract-source-strings 只读取源码并打印候选词条，不修改任何文件")
 
 
 def parse_arguments():
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--restore', action='store_true')
+    parser.add_argument('--extract-source-strings', action='store_true')
     parser.add_argument('--help', action='store_true')
     parser.add_argument('--cursorDir', dest='cursor_dir')
+    parser.add_argument('--limit', type=int, default=200)
     args, unknown_args = parser.parse_known_args()
 
     if unknown_args:
@@ -636,17 +595,25 @@ def parse_arguments():
         print_help()
         sys.exit(1)
 
-    selected_modes = [mode for mode, enabled in (("--apply", args.apply), ("--restore", args.restore)) if enabled]
+    selected_modes = [
+        mode
+        for mode, enabled in (
+            ("--apply", args.apply),
+            ("--restore", args.restore),
+            ("--extract-source-strings", args.extract_source_strings),
+        )
+        if enabled
+    ]
     if len(selected_modes) > 1:
-        print("\n[错误] --apply 与 --restore 不能同时使用")
+        print("\n[错误] --apply、--restore 与 --extract-source-strings 不能同时使用")
         print_help()
         sys.exit(1)
 
     if args.help or not selected_modes:
         print_help()
-        return None, args.cursor_dir
+        return None, args.cursor_dir, args.limit
 
-    return selected_modes[0], args.cursor_dir
+    return selected_modes[0], args.cursor_dir, args.limit
 
 
 def resolve_cursor_paths(custom_cursor_dir=None):
@@ -678,6 +645,17 @@ def validate_cursor_installation():
     sys.exit(1)
 
 
+def validate_cursor_source_path():
+    source_path = get_workbench_source_path()
+    if os.path.exists(source_path):
+        return source_path
+
+    print("\n[错误] 未找到 Cursor 打包源码")
+    print(f"[路径] 当前源码路径: {source_path}")
+    print("[提示] 请确认 Cursor 安装目录是否正确，或使用 --cursorDir 指定")
+    sys.exit(1)
+
+
 def read_text_file(file_path):
     with open(file_path, 'r', encoding='utf-8') as file:
         return file.read()
@@ -702,6 +680,163 @@ def write_json_file(file_path, data):
     with open(file_path, 'w', encoding='utf-8') as file:
         json.dump(data, file, ensure_ascii=False, indent=2)
         file.write('\n')
+
+
+def decode_js_string(raw_text):
+    try:
+        return json.loads(f'"{raw_text}"')
+    except json.JSONDecodeError:
+        return raw_text
+
+
+def is_cursor_source_context(source_text, start_index, end_index):
+    context_start = max(0, start_index - 700)
+    context_end = min(len(source_text), end_index + 700)
+    context = source_text[context_start:context_end].lower()
+    return any(keyword in context for keyword in SOURCE_EXTRACTION_CONTEXT_KEYWORDS)
+
+
+def is_probable_ui_source_text(text):
+    if not text or text in SOURCE_EXTRACTION_PROTECTED_TEXTS:
+        return False
+    if len(text) > 90:
+        return False
+    if any(control in text for control in ("\n", "\r", "\t")):
+        return False
+    if not re.search(r"[A-Za-z]", text):
+        return False
+    if re.search(r"^[a-z0-9_.:/\\-]+$", text):
+        return False
+    if re.search(r"^(?:cursor|workbench|editor|terminal|composer|agent|aiserver|vscode|github)\.", text, re.IGNORECASE):
+        return False
+    if re.search(r"^[a-z]+(?:_[a-z0-9]+)+$", text):
+        return False
+    if re.search(r"\.(?:js|ts|tsx|json|md|py|go|rs|java|cpp|html|css)$", text, re.IGNORECASE):
+        return False
+    if text.startswith(("/", "./", "../", "http://", "https://")):
+        return False
+    if "${" in text or "=>" in text:
+        return False
+    if text.isupper() and len(text.split()) <= 2:
+        return False
+    return True
+
+
+def add_source_candidate(candidates, text, source_kind, offset):
+    data = candidates.setdefault(text, {"count": 0, "sources": set(), "offset": offset})
+    data["count"] += 1
+    data["sources"].add(source_kind)
+
+
+def extract_frontmatter_block(markdown_text):
+    match = re.match(r'^---\s*\n(.*?)\n---', markdown_text, re.DOTALL)
+    return match.group(1) if match else ""
+
+
+def parse_frontmatter_description(frontmatter_text):
+    lines = frontmatter_text.splitlines()
+    for index, line in enumerate(lines):
+        if not line.startswith("description:"):
+            continue
+
+        value = line.split(":", 1)[1].strip()
+        if value in (">-", ">", "|-", "|"):
+            description_lines = []
+            for next_line in lines[index + 1:]:
+                if re.match(r'^\w[\w-]*:', next_line):
+                    break
+                stripped_line = next_line.strip()
+                if stripped_line:
+                    description_lines.append(stripped_line)
+            return normalize_markdown_description(" ".join(description_lines))
+
+        return normalize_markdown_description(value.strip().strip('"'))
+
+    return ""
+
+
+def normalize_markdown_description(text):
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def extract_skill_description_candidates(candidates, translation_dictionary_data):
+    candidate_count = 0
+    for skills_dir in get_cursor_skills_dirs():
+        if not os.path.isdir(skills_dir):
+            continue
+
+        for dir_entry in sorted(os.listdir(skills_dir)):
+            skill_path = os.path.join(skills_dir, dir_entry, "SKILL.md")
+            if not os.path.exists(skill_path):
+                continue
+            try:
+                skill_text = read_text_file(skill_path)
+            except Exception:
+                continue
+
+            description = parse_frontmatter_description(extract_frontmatter_block(skill_text))
+            if not description or description in translation_dictionary_data:
+                continue
+
+            add_source_candidate(candidates, description, "skill-description", skill_path)
+            candidate_count += 1
+
+    return candidate_count
+
+
+def is_contextual_ui_string(source_text, start_index, end_index):
+    prefix = source_text[max(0, start_index - 80):start_index]
+    suffix = source_text[end_index:min(len(source_text), end_index + 80)]
+    if any(re.search(rf'{field}\s*:\s*$', prefix) for field in SOURCE_EXTRACTION_CONTEXTUAL_QUOTED_FIELDS):
+        return True
+    if re.search(r'\?\s*$', prefix) and re.search(r'^\s*:', suffix):
+        return True
+    if re.search(r':\s*$', prefix) and re.search(r'^\s*[),}\]]', suffix):
+        return True
+    return False
+
+
+def extract_source_translation_candidates(limit):
+    source_path = validate_cursor_source_path()
+    translation_dictionary_data = read_translation_dictionary()
+    source_text = read_text_file(source_path)
+    candidates = {}
+
+    for match in SOURCE_EXTRACTION_FIELD_PATTERN.finditer(source_text):
+        if not is_cursor_source_context(source_text, match.start(), match.end()):
+            continue
+        text = decode_js_string(match.group(1)).strip()
+        if text in translation_dictionary_data or not is_probable_ui_source_text(text):
+            continue
+        add_source_candidate(candidates, text, "field", match.start())
+
+    for match in SOURCE_EXTRACTION_QUOTED_STRING_PATTERN.finditer(source_text):
+        if not is_cursor_source_context(source_text, match.start(), match.end()):
+            continue
+        if not is_contextual_ui_string(source_text, match.start(), match.end()):
+            continue
+        text = decode_js_string(match.group(1)).strip()
+        if text in translation_dictionary_data or not is_probable_ui_source_text(text):
+            continue
+        if not re.search(r"^[A-Z][A-Za-z0-9 &'(),./:+-]*(?: [A-Z0-9][A-Za-z0-9 &'(),./:+-]*)*$", text):
+            continue
+        add_source_candidate(candidates, text, "quoted", match.start())
+
+    extract_skill_description_candidates(candidates, translation_dictionary_data)
+
+    ordered_candidates = sorted(
+        candidates.items(),
+        key=lambda item: (-item[1]["count"], item[0].lower()),
+    )
+
+    print(f"[源码] {source_path}")
+    print(f"[词典] 已有 {len(translation_dictionary_data)} 条翻译")
+    print(f"[候选] 发现 {len(ordered_candidates)} 条未翻译候选")
+    print("[说明] 以下仅为候选，不会自动写入词典；请人工确认后补充。")
+
+    for text, data in ordered_candidates[:max(0, limit)]:
+        sources = ",".join(sorted(data["sources"]))
+        print(f"{json.dumps(text, ensure_ascii=False)} => \"\"  // count={data['count']} source={sources} offset={data['offset']}")
 
 
 def cleanup_legacy_language_pack():
@@ -766,10 +901,10 @@ def create_backup():
         print(f"[备份] 备份已存在: {backup_path}")
 
 
-def write_translation_js(usage_data, translation_dictionary_data):
-    """将翻译 + 用量 JavaScript 文件写入 Cursor 目录"""
+def write_translation_js(translation_dictionary_data):
+    """将翻译 JavaScript 文件写入 Cursor 目录"""
     js_path = get_translation_js_path()
-    js_content = generate_js_code(usage_data, translation_dictionary_data)
+    js_content = generate_js_code(translation_dictionary_data)
     write_text_file(js_path, js_content)
     print(f"[写入] 脚本已写入: {js_path}")
 
@@ -868,29 +1003,22 @@ def restore_original():
     print("[完成] 已恢复原始状态")
 
 
-def print_usage_summary(usage_data):
-    if usage_data and usage_data.get("is_valid"):
-        print(f"[用量] 总用量: {usage_data['total_used']} / {usage_data['total_limit']} 次")
-        print(f"[用量] 高级请求: {usage_data['premium_used']} / {usage_data['premium_limit']} 次")
-        print(f"[用量] 剩余: {usage_data['remaining']} 次")
-        if usage_data.get('billing_cycle_start'):
-            print(f"[用量] 计费周期: {usage_data['billing_cycle_start']} 至 {usage_data['billing_cycle_end']}")
-    else:
-        print("[用量] 获取用量数据失败，将仅汉化")
-
-
 def main():
     """主程序入口"""
     print("=" * 60)
-    print("  Cursor 汉化 + 用量监控工具")
+    print("  Cursor 汉化工具")
     print(f"  平台: {CURRENT_PLATFORM}")
     print(f"  时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
-    mode, custom_cursor_dir = parse_arguments()
+    mode, custom_cursor_dir, source_candidate_limit = parse_arguments()
     resolve_cursor_paths(custom_cursor_dir)
 
     if mode is None:
+        return
+
+    if mode == '--extract-source-strings':
+        extract_source_translation_candidates(source_candidate_limit)
         return
 
     validate_cursor_installation()
@@ -901,41 +1029,26 @@ def main():
         restore_original()
         return
 
-    print("\n[步骤 1/4] 读取认证信息...")
-    access_token, email = read_access_token()
-    if access_token:
-        print(f"[认证] 已找到令牌，邮箱: {email or '未知'}")
-    else:
-        print("[认证] 未找到认证令牌，将跳过用量获取（仅汉化）")
-
-    if access_token:
-        print("\n[步骤 2/4] 获取用量数据...")
-        usage_data = merge_usage_data(access_token)
-        print_usage_summary(usage_data)
-    else:
-        print("\n[步骤 2/4] 跳过用量获取（无令牌）")
-        usage_data = create_empty_usage_data()
-
-    print("\n[步骤 3/5] 读取翻译词典...")
+    print("\n[步骤 1/3] 读取翻译词典...")
     translation_dictionary_data = read_translation_dictionary()
     print(f"[词典] 已加载 {len(translation_dictionary_data)} 条翻译")
 
     if is_already_injected():
         print("\n[检测] 脚本已注入，正在更新...")
-        write_translation_js(usage_data, translation_dictionary_data)
+        write_translation_js(translation_dictionary_data)
         update_checksum()
         print("\n[完成] 脚本已更新！重启 Cursor 生效。")
         return
 
-    print(f"\n[步骤 4/5] 创建备份并写入脚本...")
+    print(f"\n[步骤 2/3] 创建备份并写入脚本...")
     create_backup()
-    write_translation_js(usage_data, translation_dictionary_data)
+    write_translation_js(translation_dictionary_data)
 
-    print("[步骤 5/5] 注入 HTML 引用...")
+    print("[步骤 3/3] 注入 HTML 引用...")
     inject_into_html()
 
     print("\n" + "=" * 60)
-    print("  [完成] Cursor 汉化 + 用量监控 注入成功！")
+    print("  [完成] Cursor 汉化注入成功！")
     print("  请重启 Cursor 以查看效果。")
     print("  如需恢复: python CursorTranslate.py --restore")
     print("  如需重新应用: python CursorTranslate.py --apply")

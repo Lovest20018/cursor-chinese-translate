@@ -1,6 +1,6 @@
 # Cursor V3 Chinese Translate
 
-> Cursor V3 中文增强翻译脚本：通过注入前端翻译脚本补全 Cursor 自定义 UI、设置页、插件页、MCP、欢迎页等官方 VS Code 中文语言包覆盖不到的英文内容，并在设置页展示账号用量。
+> Cursor V3 中文增强翻译脚本：通过注入前端翻译脚本补全 Cursor 自定义 UI、Cursor 设置页、插件页、MCP、欢迎页等官方 VS Code 中文语言包覆盖不到的英文内容。
 
 ## 功能特性
 
@@ -9,8 +9,6 @@
 - 使用 `cursor_translate_dic.txt` 维护精确翻译词典，便于继续补充遗漏项。
 - 支持翻译文本节点以及 `title`、`aria-label`、`placeholder` 等属性。
 - 监听 DOM 动态变化，处理弹窗、菜单、设置项等后加载内容。
-- 自动读取本地 Cursor 登录信息并获取用量数据。
-- 在 Cursor 设置页插入用量卡片。
 - 自动备份并恢复 `workbench.html`、`product.json`。
 - 自动更新 `product.json` 校验值，降低“安装损坏”提示概率。
 
@@ -31,7 +29,7 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `CursorTranslate.py` | 主脚本，负责注入、恢复、用量获取、校验值更新 |
+| `CursorTranslate.py` | 主脚本，负责词典读取、脚本生成、注入、恢复、校验值更新 |
 | `cursor_translate_dic.txt` | 翻译词典文件 |
 | `README.md` | 项目说明文档 |
 | `.gitignore` | Git 忽略规则 |
@@ -39,9 +37,8 @@
 ## 环境要求
 
 - Python 3
-- 本地已安装并登录 Cursor
+- 本地已安装 Cursor
 - 对 Cursor 安装目录具有读写权限
-- 如需显示用量，网络需可访问 Cursor 用量接口
 
 项目仅使用 Python 标准库，不依赖第三方 Python 包。
 
@@ -92,6 +89,14 @@ python CursorTranslate.py --restore
 - 还原 `workbench.html`
 - 还原 `product.json`
 - 删除生成的 `cursor_hanhua.js`
+
+### 从 Cursor 源码提取候选词条
+
+```bash
+python CursorTranslate.py --extract-source-strings --limit=200
+```
+
+该命令会读取 Cursor 打包后的 `workbench.desktop.main.js`，并额外扫描本地 `skills-cursor/*/SKILL.md` 的 frontmatter `description`，从 Cursor 相关模块和技能说明中提取可能显示在界面上的英文候选词条。它只打印候选结果，不会修改词典，也不会写入 Cursor 安装目录。候选结果需要人工确认后再补进 `cursor_translate_dic.txt`。
 
 ## Windows 示例
 
@@ -173,12 +178,21 @@ Account => 账户
 - 索引、网络、钩子、自动运行相关设置
 - 欢迎页按钮和最近项目区域
 - 编辑器菜单中 Cursor 自定义动作
+- Agent / Chat 右键菜单和工具调用时间线
 
 如果仍有英文，截图后把原文补进 `cursor_translate_dic.txt`，再执行：
 
 ```bash
 python CursorTranslate.py --apply
 ```
+
+也可以先运行候选提取命令，从 Cursor 打包源码中查找相关英文：
+
+```bash
+python CursorTranslate.py --extract-source-strings --limit=200
+```
+
+不要把提取结果全量加入词典；源码里会包含内部状态、错误码、命令 ID、快捷键、模型名和服务名。只补确认会显示在 Cursor 自定义 UI 中的文案。
 
 ## 备份与恢复
 
@@ -212,7 +226,7 @@ python CursorTranslate.py --apply
 - 文本是动态加载的菜单、弹窗或设置项
 - 原文与词典不完全一致
 
-处理方式：把完整英文或截图中的末级标题/说明文本加入 `cursor_translate_dic.txt`，重新执行 `--apply` 并重启 Cursor。
+处理方式：优先补 Cursor 自定义 UI、Cursor 设置表体、顶部栏和 Cursor 相关菜单中的原文；不要把 VS Code 内置设置项大面积加入词典。补完后重新执行 `--apply` 并重启 Cursor。
 
 ### 带引号的词条匹配不上
 
@@ -237,21 +251,10 @@ python CursorTranslate.py --apply
 
 说明 Cursor 安装目录不是默认路径，使用 `--cursorDir` 指定实际路径。
 
-### 用量数据为空
-
-可能原因：
-
-- Cursor 未登录
-- 本地 token 无效或已过期
-- 网络无法访问 Cursor 用量接口
-
-这种情况下汉化仍可继续生效，只是用量卡片数据可能为空。
-
 ## 安全说明
 
-- 脚本不会上传本地数据库文件。
-- 登录信息只从本地 Cursor 数据目录读取。
-- 用量查询使用 Cursor 自身接口。
+- 脚本不读取 Cursor 登录信息、本地 token 或本地数据库。
+- 脚本不访问网络，也不会上传本地文件。
 - 修改安装目录前会自动备份关键文件。
 
 该项目会修改 Cursor 安装目录内文件，请自行评估风险，并建议保留备份。
@@ -260,4 +263,5 @@ python CursorTranslate.py --apply
 
 ```bash
 python -m py_compile CursorTranslate.py
+python CursorTranslate.py --extract-source-strings --limit=50
 ```
