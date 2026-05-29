@@ -24,18 +24,25 @@ import sys
 
 CURRENT_PLATFORM = platform.system().lower()
 
-DEFAULT_WINDOWS_INSTALL_PATH = os.path.join(
+DEFAULT_WINDOWS_USER_INSTALL_PATH = os.path.join(
     os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
     "Programs",
     "cursor",
 )
+DEFAULT_WINDOWS_SYSTEM_INSTALL_PATH = r"C:\Program Files\cursor"
 DEFAULT_WINDOWS_USER_DATA_PATH = os.path.join(
     os.environ.get("APPDATA", os.path.expanduser("~")),
     "Cursor",
 )
 
 if CURRENT_PLATFORM == 'windows':
-    CURSOR_INSTALL_PATH = DEFAULT_WINDOWS_INSTALL_PATH
+    # 优先检查用户级安装，如果不存在则检查系统级安装
+    if os.path.exists(DEFAULT_WINDOWS_USER_INSTALL_PATH):
+        CURSOR_INSTALL_PATH = DEFAULT_WINDOWS_USER_INSTALL_PATH
+    elif os.path.exists(DEFAULT_WINDOWS_SYSTEM_INSTALL_PATH):
+        CURSOR_INSTALL_PATH = DEFAULT_WINDOWS_SYSTEM_INSTALL_PATH
+    else:
+        CURSOR_INSTALL_PATH = DEFAULT_WINDOWS_USER_INSTALL_PATH  # 默认使用用户级路径
 elif CURRENT_PLATFORM == 'linux':
     CURSOR_INSTALL_PATH = "/usr/share/cursor"
 else:
@@ -593,7 +600,7 @@ def get_product_backup_path():
 
 def get_default_install_path_hint():
     if CURRENT_PLATFORM == 'windows':
-        return r"%LocalAppData%\Programs\cursor"
+        return r"%LocalAppData%\Programs\cursor (用户级) 或 C:\Program Files\cursor (系统级)"
     return DEFAULT_CURSOR_INSTALL_PATH
 
 
@@ -655,6 +662,33 @@ def resolve_cursor_paths(custom_cursor_dir=None):
         CURSOR_INSTALL_PATH = os.path.abspath(os.path.expanduser(custom_cursor_dir))
 
 
+def check_write_permission():
+    """检查是否有写入权限，特别是对于 Windows 系统级安装"""
+    if CURRENT_PLATFORM != 'windows':
+        return True
+
+    # 检查是否是系统级安装路径
+    if CURSOR_INSTALL_PATH == DEFAULT_WINDOWS_SYSTEM_INSTALL_PATH or CURSOR_INSTALL_PATH.startswith(r"C:\Program Files"):
+        # 尝试在安装目录创建临时文件来测试权限
+        test_file = os.path.join(CURSOR_INSTALL_PATH, ".write_test_temp")
+        try:
+            with open(test_file, 'w') as f:
+                f.write("test")
+            os.remove(test_file)
+            return True
+        except (PermissionError, OSError):
+            print("\n[错误] 权限不足")
+            print(f"[路径] 当前安装目录: {CURSOR_INSTALL_PATH}")
+            print("[原因] 系统级安装需要管理员权限才能修改文件")
+            print("[解决] 请以管理员身份运行此脚本：")
+            print("       1. 右键点击 PowerShell 或命令提示符")
+            print("       2. 选择「以管理员身份运行」")
+            print("       3. 重新执行脚本命令")
+            return False
+
+    return True
+
+
 def validate_cursor_installation():
     required_paths = [
         ("安装目录", CURSOR_INSTALL_PATH),
@@ -674,6 +708,12 @@ def validate_cursor_installation():
 
     print(f"[默认] 当前平台默认安装目录: {get_default_install_path_hint()}")
     print("[提示] 如果 Cursor 安装在其他位置，请使用 --cursorDir=\"实际路径\"")
+
+    # Windows 系统级安装的额外提示
+    if CURRENT_PLATFORM == 'windows' and CURSOR_INSTALL_PATH == DEFAULT_WINDOWS_SYSTEM_INSTALL_PATH:
+        print("[注意] 检测到系统级安装路径，修改文件需要管理员权限")
+        print("[建议] 请以管理员身份运行此脚本（右键 -> 以管理员身份运行）")
+
     sys.exit(1)
 
 
@@ -1180,16 +1220,18 @@ def main():
         extract_source_translation_candidates(source_candidate_limit)
         return
 
-    validate_cursor_installation()
-
     if mode == '--cleanup-legacy':
         print("\n[模式] 清理早期版本遗留配置...")
         cleanup_legacy_language_pack()
         print("[完成] 清理完成")
         return
 
+    validate_cursor_installation()
+
     if mode == '--restore':
         print("\n[模式] 恢复原始文件...")
+        if not check_write_permission():
+            sys.exit(1)
         restore_original()
         return
 
@@ -1199,6 +1241,10 @@ def main():
 
     if is_already_injected():
         print("\n[检测] 脚本已注入，正在更新...")
+
+        # 预检：确保有写入权限
+        if not check_write_permission():
+            sys.exit(1)
 
         # 预检：确保 product.json 中存在 checksum key
         if not check_checksum_key_exists():
@@ -1211,6 +1257,10 @@ def main():
             sys.exit(1)
         print("\n[完成] 脚本已更新！重启 Cursor 生效。")
         return
+
+    # 预检：确保有写入权限（在写入任何文件前）
+    if not check_write_permission():
+        sys.exit(1)
 
     # 预检：确保 product.json 中存在 checksum key（在写入任何文件前）
     if not check_checksum_key_exists():

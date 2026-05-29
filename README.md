@@ -46,9 +46,12 @@
 
 ### Cursor 安装目录
 
-- Windows: `%LocalAppData%\Programs\cursor`
+- Windows (用户级安装): `%LocalAppData%\Programs\cursor`
+- Windows (系统级安装): `C:\Program Files\cursor`
 - Linux: `/usr/share/cursor`
 - 其他系统: `/usr/share/cursor`
+
+**注意：** 脚本会自动检测 Windows 下的用户级和系统级安装路径。如果是系统级安装（`C:\Program Files\cursor`），需要**管理员权限**才能修改文件。
 
 ### Cursor 用户数据目录
 
@@ -70,6 +73,16 @@
 - 并发修改导致文件损坏或不一致
 
 确保 Cursor 完全退出后再执行脚本。
+
+**Windows 系统级安装用户注意：**
+
+如果 Cursor 安装在 `C:\Program Files\cursor`（系统级安装），修改文件需要**管理员权限**。请按以下步骤操作：
+
+1. 右键点击 **PowerShell** 或 **命令提示符**
+2. 选择 **「以管理员身份运行」**
+3. 在管理员窗口中执行脚本命令
+
+如果没有管理员权限，脚本会提示权限不足并退出。
 
 ### 查看帮助
 

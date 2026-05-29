@@ -1522,4 +1522,142 @@
 "Updated code tour" => "已更新代码导览"
 "Update code tour" => "更新代码导览"
 "Recording CI findings" => "正在记录 CI 发现"
+
+# Jump to Next Diff on Accept
+"Jump to Next Diff on Accept" => "接受后跳转到下一个差异"
+"Automatically jump to the next diff when accepting changes with Ctrl+Y" => "使用 Ctrl+Y 接受更改时自动跳转到下一个差异"
+
+# Automation Page
+"Run History" => "运行历史"
+"Back to automations" => "返回自动化"
+"Automation failed" => "自动化失败"
+"Automation template filters" => "自动化模板筛选"
+"Filter by" => "筛选条件"
+"Status" => "状态"
+"Trigger" => "触发器"
+"No Runs Yet" => "暂无运行记录"
+
+# Memory Tool
+"Allows the agent to read and write persistent notes with the memory tool" => "允许智能体使用记忆工具读写持久化笔记"
+"Memories" => "记忆"
+
+# General UI
+"Repository" => "仓库"
+"Show" => "显示"
+"Source" => "来源"
+"Open" => "打开"
+"Configure Icon Visibility" => "配置图标可见性"
+
+# Task Status
+"Draft" => "草稿"
+"Running" => "运行中"
+"Done" => "完成"
+"Updated" => "已更新"
+
+# Theme Options
+"Cursor Light" => "Cursor 浅色"
+"Cursor Dark" => "Cursor 深色"
+"Cursor Dark High Contrast" => "Cursor 深色高对比度"
+
+# Menu Items
+"Cursor Docs" => "Cursor 文档"
+"Contact Us" => "联系我们"
+
+# Terminal
+"Hide Terminal List" => "隐藏终端列表"
+
+# Browser
+"Favorites, Recents" => "收藏夹、最近访问"
+"No favorites or history yet." => "暂无收藏或历史记录。"
+"Search or enter URL" => "搜索或输入网址"
+
+# Git UI
+"No Uncommitted Changes" => "无未提交的更改"
+"All Branch Changes" => "所有分支更改"
+"Use a Git repository to track changes" => "使用 Git 仓库跟踪更改"
+"Initialize Repository" => "初始化仓库"
+
+# File Operations
+"Save File" => "保存文件"
+"Discard Changes" => "放弃更改"
+"Copy Relative Path" => "复制相对路径"
+"Diff View" => "差异视图"
+"Line Numbers" => "行号"
+"Ignore Whitespace" => "忽略空白字符"
+"Find in Diff" => "在差异中查找"
+"Refresh Changes" => "刷新更改"
+
+# View Modes
+"Unified" => "统一视图"
+"Split" => "分屏视图"
+
+# Canvas
+"Show Canvas List" => "显示画布列表"
+"Hide Canvas List" => "隐藏画布列表"
+"No canvases found" => "未找到画布"
+"Create new canvas" => "创建新画布"
+"PR Review Canvas" => "PR 审查画布"
+"Docs Canvas" => "文档画布"
+"Render a PR diff review as a Cursor Canvas that groups changes by reviewer..." => "将 PR 差异审查渲染为 Cursor 画布，按审查者分组更改..."
+"Render a documentation-style Cursor Canvas that organizes architecture notes, API..." => "渲染文档风格的 Cursor 画布，组织架构笔记、API..."
+"Render a PR diff review as a Cursor Canvas that groups changes by reviewer importance, separates boilerplate from core logic, and highlights tricky or unexpected code. Use when reviewing a pull..." => "将 PR 差异审查渲染为 Cursor 画布，按审查者重要性分组更改，将样板代码与核心逻辑分离，并突出显示复杂或意外的代码。适用于审查拉取请求..."
+"Render a documentation-style Cursor Canvas that organizes architecture notes, API references, walkthroughs, and how-tos into a navigable layout with sections, tables of contents, and cross-referenc..." => "渲染文档风格的 Cursor 画布，将架构笔记、API 参考、演练和操作指南组织成可导航的布局，包含章节、目录和交叉引用..."
+"Switch between local changes and PRs" => "在本地更改和 PR 之间切换"
+
+# Build Options
+"Build Locally" => "本地构建"
+"Build in Parallel" => "并行构建"
+"Build" => "构建"
+
+# System Tray Menu
+"Recent Agents" => "最近的智能体"
+"Clear All Notifications" => "清除所有通知"
+"Open Cursor" => "打开 Cursor"
+"Quit" => "退出"
+
+# Context Menu
+"Copy as Markdown" => "复制为 Markdown"
+"Find in Plan" => "在计划中查找"
+
+# Checkpoint
+"Restore Checkpoint" => "恢复检查点"
+"Restore edits to the latest checkpoint" => "恢复编辑到最新检查点"
+"Redo checkpoint" => "重做检查点"
+
+# Workspace
+"Workspace Name" => "工作区名称"
+"Filter folders..." => "筛选文件夹..."
+"No local folders available yet." => "暂无可用的本地文件夹。"
+"Add Folder" => "添加文件夹"
+"Select at least 2" => "至少选择 2 个"
+
+# Agent
+"Internal document" => "内部文档"
+
+# @ Menu
+"Enable browser tools" => "启用浏览器工具"
+"Files & Folders" => "文件与文件夹"
+"Past Chats" => "历史对话"
+
+# Permissions Dialog
+"Enable Run Everything?" => "启用运行所有权限？"
+"This allows the agent to execute any tool or shell command without approval. A prompt injection or a malicious tool could delete files or exfiltrate secrets from your machine. We recommend using Allowlist." => "这将允许智能体在未经批准的情况下执行任何工具或 Shell 命令。提示注入或恶意工具可能会删除文件或窃取您机器上的机密信息。我们建议使用允许列表。"
+"Use Allowlist instead" => "改用允许列表"
+"Enable Run Everything" => "启用运行所有权限"
+
+# Sidebar
+"Remove from Sidebar" => "从侧边栏移除"
+
+# Projects
+"Analyze script projects" => "分析脚本项目"
+"Dot grid animator" => "点阵网格动画器"
+"Explorer" => "资源管理器"
+
+# Context Usage
+"context used" => "上下文已使用"
+"tokens" => "令牌"
+
+# Chat Input
+"Add skills, MCPs and more" => "添加技能、MCP 等"
+"Send follow" => "发送跟进"
 "Record CI findings" => "记录 CI 发现"
