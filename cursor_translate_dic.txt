@@ -1260,6 +1260,8 @@
 "Pinned" => "已固定"
 "Unpin" => "取消固定"
 "Rename" => "重命名"
+"Edit RightArrow" => "编辑 RightArrow"
+"Send now" => "立即发送"
 "Mark as Read" => "标记为已读"
 "Mark as Unread" => "标记为未读"
 "Fork Chat" => "分叉对话"
